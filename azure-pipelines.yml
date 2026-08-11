@@ -62,8 +62,59 @@ stages:
         jdkArchitectureOption: 'x64'
         jdkSourceOption: 'PreInstalled'
 
+    - script: |
+        set -e
+        echo "=== Starting Postgres & RabbitMQ containers for tests ==="
+        docker run -d --name pg-test \
+          -e POSTGRES_DB=telehealth_db \
+          -e POSTGRES_USER=telehealth \
+          -e POSTGRES_PASSWORD=telehealth123 \
+          -p 5432:5432 \
+          postgres:16-alpine
+
+        docker run -d --name rabbit-test \
+          -e RABBITMQ_DEFAULT_USER=guest \
+          -e RABBITMQ_DEFAULT_PASS=guest \
+          -e RABBITMQ_DEFAULT_VHOST=/telehealth \
+          -p 5672:5672 \
+          rabbitmq:3.13-management-alpine
+
+        echo "=== Waiting for Postgres to be ready ==="
+        for i in $(seq 1 30); do
+          if docker exec pg-test pg_isready -U telehealth -d telehealth_db > /dev/null 2>&1; then
+            echo "Postgres is ready"
+            break
+          fi
+          echo "Attempt $i/30 - waiting..."
+          sleep 2
+        done
+
+        echo "=== Waiting for RabbitMQ to be ready ==="
+        for i in $(seq 1 30); do
+          if docker exec rabbit-test rabbitmq-diagnostics -q ping > /dev/null 2>&1; then
+            echo "RabbitMQ is ready"
+            break
+          fi
+          echo "Attempt $i/30 - waiting..."
+          sleep 2
+        done
+      displayName: 'Start Postgres & RabbitMQ (for context-load test)'
+
     - task: Maven@4
       displayName: 'mvn clean package (with tests)'
+      env:
+        DB_HOST: localhost
+        DB_PORT: '5432'
+        DB_NAME: telehealth_db
+        DB_USERNAME: telehealth
+        DB_PASSWORD: telehealth123
+        RABBITMQ_HOST: localhost
+        RABBITMQ_PORT: '5672'
+        RABBITMQ_USERNAME: guest
+        RABBITMQ_PASSWORD: guest
+        JWT_SECRET: 'CiTestOnlySecretKeyDoNotUseInProduction2024HMACSHA256'
+        TELEHEALTH_ADMIN_EMAIL: 'admin@telehealth.local'
+        TELEHEALTH_ADMIN_PASSWORD: 'ChangeMe123!'
       inputs:
         mavenPomFile: 'pom.xml'
         goals: 'clean package'
@@ -73,6 +124,11 @@ stages:
         codeCoverageToolOption: 'JaCoCo'
         javaHomeOption: 'JDKVersion'
         jdkVersionOption: '1.21'          # ← كان 1.17
+
+    - script: |
+        docker rm -f pg-test rabbit-test 2>/dev/null || true
+      displayName: 'Stop test containers'
+      condition: always()
 
     - task: PublishTestResults@2
       displayName: 'Publish JUnit results'
