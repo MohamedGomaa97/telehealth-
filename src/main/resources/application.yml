@@ -1,0 +1,111 @@
+spring:
+  application:
+    name: telehealth-platform
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:telehealth_db}
+    username: ${DB_USERNAME:telehealth}
+    password: ${DB_PASSWORD:telehealth123}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        default_schema: public
+
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+    enabled: true
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    virtual-host: /telehealth
+    listener:
+      simple:
+        retry:
+          enabled: true
+          initial-interval: 2000
+          max-attempts: 3
+          multiplier: 2.0
+        acknowledge-mode: auto
+        concurrency: 3
+        max-concurrency: 10
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+server:
+  port: 8080
+  servlet:
+    context-path: /api/v1
+
+# Telehealth Module Configuration
+telehealth:
+  rabbitmq:
+    exchanges:
+      consultation: consultation.exchange
+      emergency: emergency.exchange
+      notification: notification.exchange
+    queues:
+      consultation-requested: consultation.requested.queue
+      consultation-assigned: consultation.assigned.queue
+      consultation-completed: consultation.completed.queue
+      emergency-triggered: emergency.triggered.queue
+      emergency-dispatched: emergency.dispatched.queue
+      notification-patient: notification.patient.queue
+      notification-doctor: notification.doctor.queue
+    routing-keys:
+      consultation-requested: consultation.requested
+      consultation-assigned: consultation.assigned
+      consultation-completed: consultation.completed
+      emergency-triggered: emergency.triggered
+      emergency-dispatched: emergency.dispatched
+
+  security:
+    jwt:
+      secret: ${JWT_SECRET:TeleHealthSecretKey2024SuperSecureBase64EncodedStringForHMACSHA256Algorithm}
+      expiration-ms: 86400000  # 24 hours
+    admin:
+      email: ${TELEHEALTH_ADMIN_EMAIL:admin@telehealth.local}
+      password: ${TELEHEALTH_ADMIN_PASSWORD:ChangeMe123!}
+
+  emergency:
+    auto-dispatch-threshold-minutes: 5
+    max-response-time-minutes: 30
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,rabbitmq
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.telehealth: DEBUG
+    org.springframework.amqp: INFO
+    org.hibernate.SQL: DEBUG

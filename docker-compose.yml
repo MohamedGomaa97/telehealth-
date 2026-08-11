@@ -1,0 +1,78 @@
+version: '3.9'
+
+services:
+
+  # ─── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: telehealth-postgres
+    environment:
+      POSTGRES_DB: telehealth_db
+      POSTGRES_USER: telehealth
+      POSTGRES_PASSWORD: telehealth123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telehealth -d telehealth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - telehealth-net
+
+  # ─── RabbitMQ ────────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: telehealth-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_VHOST: /telehealth
+    ports:
+      - "5672:5672"    # AMQP port
+      - "15672:15672"  # Management UI  →  http://localhost:15672
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - telehealth-net
+
+  # ─── TeleHealth App ──────────────────────────────────────────────────────────
+  telehealth-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: telehealth-app
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DB_HOST: postgres
+      DB_USERNAME: telehealth
+      DB_PASSWORD: telehealth123
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: guest
+      RABBITMQ_PASSWORD: guest
+      JWT_SECRET: TeleHealthSecretKey2024SuperSecureBase64EncodedStringForHMACSHA256Algorithm
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - telehealth-net
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+
+networks:
+  telehealth-net:
+    driver: bridge

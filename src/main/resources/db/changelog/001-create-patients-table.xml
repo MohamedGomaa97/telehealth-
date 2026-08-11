@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                   http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="001-create-patients" author="telehealth">
+        <createTable tableName="patients">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="full_name" type="varchar(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="email" type="varchar(255)">
+                <constraints nullable="false" unique="true" uniqueConstraintName="uk_patients_email"/>
+            </column>
+            <column name="phone_number" type="varchar(20)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="date_of_birth" type="date"/>
+            <column name="national_id" type="varchar(20)">
+                <constraints nullable="false" unique="true" uniqueConstraintName="uk_patients_national_id"/>
+            </column>
+            <column name="blood_type" type="varchar(10)"/>
+            <column name="address" type="varchar(500)"/>
+            <column name="latitude" type="double precision" defaultValue="0.0"/>
+            <column name="longitude" type="double precision" defaultValue="0.0"/>
+            <column name="status" type="varchar(20)" defaultValue="ACTIVE">
+                <constraints nullable="false"/>
+            </column>
+            <column name="emergency_contact" type="jsonb"/>
+            <column name="medical_history" type="jsonb" defaultValue="[]"/>
+            <column name="allergies" type="jsonb" defaultValue="[]"/>
+            <column name="chronic_conditions" type="jsonb" defaultValue="[]"/>
+            <column name="deleted" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createIndex tableName="patients" indexName="idx_patients_email">
+            <column name="email"/>
+        </createIndex>
+        <createIndex tableName="patients" indexName="idx_patients_status">
+            <column name="status"/>
+        </createIndex>
+        <createIndex tableName="patients" indexName="idx_patients_deleted">
+            <column name="deleted"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>
