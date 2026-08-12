@@ -14,13 +14,13 @@ pr:
       - main
 
 variables:
-  - group: Pipeline-var        # ← بيجيب المتغيرات من الـ group (secrets الحقيقية تتحط هنا)
+  - group: Pipeline-var
   - name: AZURE_SERVICE_CONN
     value: 'azure-sub'
   - name: ACR_NAME
     value: 'eblaaicontainer'
   - name: ACR_LOGIN_SERVER
-    value: 'eblaaicontainer.azurecr.io'
+    value: 'eblaaicontainer-ffddaucsc4haf3dq.azurecr.io'
   - name: RESOURCE_GROUP
     value: 'RERA-RG'
   - name: IMAGE_NAME
@@ -29,14 +29,14 @@ variables:
     value: '$(Build.BuildId)'
   - name: FULL_IMAGE
     value: 'eblaaicontainer.azurecr.io/telehealth:$(Build.BuildId)'
+  - name: DEPLOY_IMAGE
+    value: 'eblaaicontainer-ffddaucsc4haf3dq.azurecr.io/telehealth:$(Build.BuildId)'
   - name: CONTAINER_GROUP_NAME
     value: 'telehealth-demo'
   - name: APP_PORT
     value: '8080'
   - name: DNS_LABEL
     value: 'telehealth-demo-$(Build.BuildId)'
-  # القيم دي المفروض تيجي فعليًا من الـ variable group "Pipeline-var" كـ secrets،
-  # القيم هنا defaults للديمو بس - غيّرها في الـ Library لو هتستخدمها فعليًا
   - name: DB_PASSWORD
     value: 'telehealth123'
   - name: RABBITMQ_PASSWORD
@@ -47,247 +47,299 @@ pool:
 
 stages:
 
-# ─────────────────────────────────────────────────────────────────────────
-- stage: CI
-  displayName: '1 · Build & Unit Tests'
-  jobs:
-  - job: BuildAndTest
-    displayName: 'Maven build + JUnit + Coverage'
-    steps:
+  # ─────────────────────────────────────────────────────────────────────────
+  - stage: CI
+    displayName: '1 · Build & Unit Tests'
+    jobs:
+      - job: BuildAndTest
+        displayName: 'Maven build + JUnit + Coverage'
+        steps:
 
-    - task: JavaToolInstaller@0
-      displayName: 'Use Java 21'          # ← كان 17، اتصلح لـ 21 (مطلوب في pom.xml)
-      inputs:
-        versionSpec: '21'
-        jdkArchitectureOption: 'x64'
-        jdkSourceOption: 'PreInstalled'
+          - task: JavaToolInstaller@0
+            displayName: 'Use Java 21'
+            inputs:
+              versionSpec: '21'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: 'PreInstalled'
 
-    - task: Maven@4
-      displayName: 'mvn clean package (with tests)'
-      inputs:
-        mavenPomFile: 'pom.xml'
-        goals: 'clean package'
-        options: '-DskipTests=false'
-        publishJUnitResults: true
-        testResultsFiles: '**/surefire-reports/TEST-*.xml'
-        codeCoverageToolOption: 'JaCoCo'
-        javaHomeOption: 'JDKVersion'
-        jdkVersionOption: '1.21'          # ← كان 1.17
+          - script: |
+              set -e
+              echo "=== Starting Postgres & RabbitMQ containers for tests ==="
+              docker run -d --name pg-test \
+                -e POSTGRES_DB=telehealth_db \
+                -e POSTGRES_USER=telehealth \
+                -e POSTGRES_PASSWORD=telehealth123 \
+                -p 5432:5432 \
+                postgres:16-alpine
+              
+              docker run -d --name rabbit-test \
+                -e RABBITMQ_DEFAULT_USER=guest \
+                -e RABBITMQ_DEFAULT_PASS=guest \
+                -e RABBITMQ_DEFAULT_VHOST=/telehealth \
+                -p 5672:5672 \
+                rabbitmq:3.13-management-alpine
+              
+              echo "=== Waiting for Postgres to be ready ==="
+              for i in $(seq 1 30); do
+                if docker exec pg-test pg_isready -U telehealth -d telehealth_db > /dev/null 2>&1; then
+                  echo "Postgres is ready"
+                  break
+                fi
+                echo "Attempt $i/30 - waiting..."
+                sleep 2
+              done
+              
+              echo "=== Waiting for RabbitMQ to be ready ==="
+              for i in $(seq 1 30); do
+                if docker exec rabbit-test rabbitmq-diagnostics -q ping > /dev/null 2>&1; then
+                  echo "RabbitMQ is ready"
+                  break
+                fi
+                echo "Attempt $i/30 - waiting..."
+                sleep 2
+              done
+            displayName: 'Start Postgres & RabbitMQ (for context-load test)'
 
-    - task: PublishTestResults@2
-      displayName: 'Publish JUnit results'
-      condition: always()
-      inputs:
-        testResultsFormat: 'JUnit'
-        testResultsFiles: '**/surefire-reports/TEST-*.xml'
-        testRunTitle: 'Unit Tests - Build $(Build.BuildId)'
+          - task: Maven@4
+            displayName: 'mvn clean package (with tests)'
+            env:
+              DB_HOST: localhost
+              DB_PORT: '5432'
+              DB_NAME: telehealth_db
+              DB_USERNAME: telehealth
+              DB_PASSWORD: telehealth123
+              RABBITMQ_HOST: localhost
+              RABBITMQ_PORT: '5672'
+              RABBITMQ_USERNAME: guest
+              RABBITMQ_PASSWORD: guest
+              JWT_SECRET: 'CiTestOnlySecretKeyDoNotUseInProduction2024HMACSHA256'
+              TELEHEALTH_ADMIN_EMAIL: 'admin@telehealth.local'
+              TELEHEALTH_ADMIN_PASSWORD: 'ChangeMe123!'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean package'
+              options: '-DskipTests=false'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              codeCoverageToolOption: 'JaCoCo'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.21'          # ← كان 1.17
 
-    - task: PublishCodeCoverageResults@2
-      displayName: 'Publish code coverage'
-      condition: succeededOrFailed()
-      inputs:
-        summaryFileLocation: '**/site/jacoco/jacoco.xml'
+          - script: |
+              docker rm -f pg-test rabbit-test 2>/dev/null || true
+            displayName: 'Stop test containers'
+            condition: always()
 
-    - task: PublishBuildArtifacts@1
-      displayName: 'Publish JAR artifact'
-      inputs:
-        PathtoPublish: 'target'
-        ArtifactName: 'jar'
+          - task: PublishTestResults@2
+            displayName: 'Publish JUnit results'
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              testRunTitle: 'Unit Tests - Build $(Build.BuildId)'
 
-# ─────────────────────────────────────────────────────────────────────────
-- stage: Package
-  displayName: '2 · Docker → ACR'
-  dependsOn: CI
-  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-  jobs:
-  - job: DockerBuildPush
-    displayName: 'Build image & push to ACR'
-    steps:
+          - task: PublishCodeCoverageResults@2
+            displayName: 'Publish code coverage'
+            condition: succeededOrFailed()
+            inputs:
+              summaryFileLocation: '**/site/jacoco/jacoco.xml'
 
-    - task: AzureCLI@2
-      displayName: 'Build & Push to ACR'
-      inputs:
-        azureSubscription: '$(AZURE_SERVICE_CONN)'
-        scriptType: 'bash'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-          set -e
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish JAR artifact'
+            inputs:
+              PathtoPublish: 'target'
+              ArtifactName: 'jar'
 
-          echo "=== Build & Push to ACR ==="
-          az acr build \
-            --registry $(ACR_NAME) \
-            --image $(IMAGE_NAME):$(IMAGE_TAG) \
-            --image $(IMAGE_NAME):latest \
-            .
-
-          echo "=== Done! Image: $(FULL_IMAGE) ==="
-
-# ─────────────────────────────────────────────────────────────────────────
-- stage: Deploy
-  displayName: '3 · Deploy → ACI (Demo)'
-  dependsOn: Package
-  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))   # ← كان false، اتفعّل
-  jobs:
-  - deployment: DeployToACI
-    displayName: 'Deploy to Azure Container Instances'
-    environment: 'production'   # ← لو عايز موافقة يدوية قبل الديبلوي، ضيف approval هنا من Pipelines → Environments
-    strategy:
-      runOnce:
-        deploy:
-          steps:
+  # ─────────────────────────────────────────────────────────────────────────
+  - stage: Package
+    displayName: '2 · Docker → ACR'
+    dependsOn: CI
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: DockerBuildPush
+        displayName: 'Build image & push to ACR'
+        steps:
 
           - task: AzureCLI@2
-            displayName: 'Deploy container group (app + postgres + rabbitmq)'
+            displayName: 'Build & Push to ACR'
             inputs:
               azureSubscription: '$(AZURE_SERVICE_CONN)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
                 set -e
+                
+                echo "=== Build & Push to ACR ==="
+                az acr build \
+                  --registry $(ACR_NAME) \
+                  --image $(IMAGE_NAME):$(IMAGE_TAG) \
+                  --image $(IMAGE_NAME):latest \
+                  .
+                
+                echo "=== Done! Image: $(FULL_IMAGE) ==="
 
-                ACR_PWD=$(az acr credential show \
-                  --name $(ACR_NAME) \
-                  --query "passwords[0].value" \
-                  --output tsv)
+  # ─────────────────────────────────────────────────────────────────────────
+  - stage: Deploy
+    displayName: '3 · Deploy → ACI (Demo)'
+    dependsOn: Package
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))   # ← كان false، اتفعّل
+    jobs:
+      - deployment: DeployToACI
+        displayName: 'Deploy to Azure Container Instances'
+        environment: 'demo'   # ← لو عايز موافقة يدوية قبل الديبلوي، ضيف approval هنا من Pipelines → Environments
+        strategy:
+          runOnce:
+            deploy:
+              steps:
 
-                az container delete \
-                  --name           $(CONTAINER_GROUP_NAME) \
-                  --resource-group $(RESOURCE_GROUP) \
-                  --yes 2>/dev/null || true
-
-                LOCATION=$(az group show -n $(RESOURCE_GROUP) --query location -o tsv)
-
-                # ملاحظة: بنبني ملف YAML لـ multi-container group (app+postgres+rabbitmq
-                # في نفس الـ network namespace، بيتكلموا مع بعض عبر localhost - زي
-                # docker-compose بالظبط) لأن az container create بالـ flags العادية
-                # بيدعم container واحد بس.
-                cat > containergroup.yaml <<YAML
-                apiVersion: '2021-10-01'
-                location: ${LOCATION}
-                name: $(CONTAINER_GROUP_NAME)
-                properties:
-                  osType: Linux
-                  restartPolicy: Always
-                  ipAddress:
-                    type: Public
-                    dnsNameLabel: $(DNS_LABEL)
-                    ports:
-                      - protocol: tcp
-                        port: $(APP_PORT)
-                  imageRegistryCredentials:
-                    - server: $(ACR_LOGIN_SERVER)
-                      username: $(ACR_NAME)
-                      password: ${ACR_PWD}
-                  containers:
-                    - name: postgres
+                - task: AzureCLI@2
+                  displayName: 'Deploy container group (app + postgres + rabbitmq)'
+                  env:
+                    JWT_SECRET_VALUE: $(JWT_SECRET)
+                    ADMIN_PASSWORD_VALUE: $(TELEHEALTH_ADMIN_PASSWORD)
+                  inputs:
+                    azureSubscription: '$(AZURE_SERVICE_CONN)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      set -e
+                      
+                      ACR_PWD=$(az acr credential show \
+                        --name $(ACR_NAME) \
+                        --query "passwords[0].value" \
+                        --output tsv)
+                      
+                      az container delete \
+                        --name           $(CONTAINER_GROUP_NAME) \
+                        --resource-group $(RESOURCE_GROUP) \
+                        --yes 2>/dev/null || true
+                      
+                      LOCATION=$(az group show -n $(RESOURCE_GROUP) --query location -o tsv)
+                      
+                      cat > containergroup.yaml <<YAML
+                      apiVersion: '2021-10-01'
+                      location: ${LOCATION}
+                      name: $(CONTAINER_GROUP_NAME)
                       properties:
-                        image: postgres:16-alpine
-                        resources:
-                          requests:
-                            cpu: 0.5
-                            memoryInGb: 1.0
-                        environmentVariables:
-                          - name: POSTGRES_DB
-                            value: telehealth_db
-                          - name: POSTGRES_USER
-                            value: telehealth
-                          - name: POSTGRES_PASSWORD
-                            secureValue: '$(DB_PASSWORD)'
-                        ports:
-                          - port: 5432
-                    - name: rabbitmq
-                      properties:
-                        image: rabbitmq:3.13-management-alpine
-                        resources:
-                          requests:
-                            cpu: 0.5
-                            memoryInGb: 1.0
-                        environmentVariables:
-                          - name: RABBITMQ_DEFAULT_USER
-                            value: guest
-                          - name: RABBITMQ_DEFAULT_PASS
-                            secureValue: '$(RABBITMQ_PASSWORD)'
-                          - name: RABBITMQ_DEFAULT_VHOST
-                            value: /telehealth
-                        ports:
-                          - port: 5672
-                          - port: 15672
-                    - name: app
-                      properties:
-                        image: $(FULL_IMAGE)
-                        resources:
-                          requests:
-                            cpu: 1.0
-                            memoryInGb: 1.5
-                        environmentVariables:
-                          - name: DB_HOST
-                            value: localhost
-                          - name: DB_USERNAME
-                            value: telehealth
-                          - name: DB_PASSWORD
-                            secureValue: '$(DB_PASSWORD)'
-                          - name: RABBITMQ_HOST
-                            value: localhost
-                          - name: RABBITMQ_USERNAME
-                            value: guest
-                          - name: RABBITMQ_PASSWORD
-                            secureValue: '$(RABBITMQ_PASSWORD)'
-                          - name: JWT_SECRET
-                            secureValue: '$(JWT_SECRET)'
-                          - name: TELEHEALTH_ADMIN_EMAIL
-                            value: admin@telehealth.local
-                          - name: TELEHEALTH_ADMIN_PASSWORD
-                            secureValue: '$(TELEHEALTH_ADMIN_PASSWORD)'
-                          - name: APP_VERSION
-                            value: '$(Build.BuildId)'
-                        ports:
-                          - port: $(APP_PORT)
-                YAML
+                        osType: Linux
+                        restartPolicy: Always
+                        ipAddress:
+                          type: Public
+                          dnsNameLabel: $(DNS_LABEL)
+                          ports:
+                            - protocol: tcp
+                              port: $(APP_PORT)
+                        imageRegistryCredentials:
+                          - server: $(ACR_LOGIN_SERVER)
+                            username: $(ACR_NAME)
+                            password: ${ACR_PWD}
+                        containers:
+                          - name: postgres
+                            properties:
+                              image: postgres:16-alpine
+                              resources:
+                                requests:
+                                  cpu: 0.25
+                                  memoryInGb: 0.5
+                              environmentVariables:
+                                - name: POSTGRES_DB
+                                  value: telehealth_db
+                                - name: POSTGRES_USER
+                                  value: telehealth
+                                - name: POSTGRES_PASSWORD
+                                  secureValue: '$(DB_PASSWORD)'
+                              ports:
+                                - port: 5432
+                          - name: rabbitmq
+                            properties:
+                              image: rabbitmq:3.13-management-alpine
+                              resources:
+                                requests:
+                                  cpu: 0.25
+                                  memoryInGb: 0.5
+                              environmentVariables:
+                                - name: RABBITMQ_DEFAULT_USER
+                                  value: guest
+                                - name: RABBITMQ_DEFAULT_PASS
+                                  secureValue: '$(RABBITMQ_PASSWORD)'
+                                - name: RABBITMQ_DEFAULT_VHOST
+                                  value: /telehealth
+                              ports:
+                                - port: 5672
+                                - port: 15672
+                          - name: app
+                            properties:
+                              image: $(DEPLOY_IMAGE)
+                              resources:
+                                requests:
+                                  cpu: 0.5
+                                  memoryInGb: 1.0
+                              environmentVariables:
+                                - name: DB_HOST
+                                  value: localhost
+                                - name: DB_USERNAME
+                                  value: telehealth
+                                - name: DB_PASSWORD
+                                  secureValue: '$(DB_PASSWORD)'
+                                - name: RABBITMQ_HOST
+                                  value: localhost
+                                - name: RABBITMQ_USERNAME
+                                  value: guest
+                                - name: RABBITMQ_PASSWORD
+                                  secureValue: '$(RABBITMQ_PASSWORD)'
+                                - name: JWT_SECRET
+                                  secureValue: '${JWT_SECRET_VALUE}'
+                                - name: TELEHEALTH_ADMIN_EMAIL
+                                  value: admin@telehealth.local
+                                - name: TELEHEALTH_ADMIN_PASSWORD
+                                  secureValue: '${ADMIN_PASSWORD_VALUE}'
+                                - name: APP_VERSION
+                                  value: '$(Build.BuildId)'
+                              ports:
+                                - port: $(APP_PORT)
+                      YAML
+                      
+                      az container create \
+                        --resource-group $(RESOURCE_GROUP) \
+                        --file containergroup.yaml
+                      
+                      FQDN=$(az container show \
+                        --name           $(CONTAINER_GROUP_NAME) \
+                        --resource-group $(RESOURCE_GROUP) \
+                        --query          "ipAddress.fqdn" \
+                        --output tsv)
+                      
+                      echo "================================================"
+                      echo "  Deployed: $(DEPLOY_IMAGE)"
+                      echo "  URL: http://${FQDN}:$(APP_PORT)/api/v1/swagger-ui.html"
+                      echo "  Health: http://${FQDN}:$(APP_PORT)/api/v1/actuator/health"
+                      echo "================================================"
 
-                az container create \
-                  --resource-group $(RESOURCE_GROUP) \
-                  --file containergroup.yaml
-
-                FQDN=$(az container show \
-                  --name           $(CONTAINER_GROUP_NAME) \
-                  --resource-group $(RESOURCE_GROUP) \
-                  --query          "ipAddress.fqdn" \
-                  --output tsv)
-
-                echo "================================================"
-                echo "  Deployed: $(FULL_IMAGE)"
-                echo "  URL: http://${FQDN}:$(APP_PORT)/api/v1/swagger-ui.html"
-                echo "  Health: http://${FQDN}:$(APP_PORT)/api/v1/actuator/health"
-                echo "================================================"
-
-          - task: AzureCLI@2
-            displayName: 'Health check'
-            inputs:
-              azureSubscription: '$(AZURE_SERVICE_CONN)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -e
-
-                FQDN=$(az container show \
-                  --name           $(CONTAINER_GROUP_NAME) \
-                  --resource-group $(RESOURCE_GROUP) \
-                  --query          "ipAddress.fqdn" \
-                  --output tsv)
-
-                # مسار الـ health الصحيح تحت /api/v1 (context-path بتاع Spring)
-                # + مهلة أطول (18 محاولة/3 دقايق) لأن أول تشغيل فيه Liquibase
-                # migrations + انتظار Postgres/RabbitMQ يبقوا جاهزين جوه نفس الـ group
-                for i in $(seq 1 18); do
-                  STATUS=$(curl -sf "http://${FQDN}:$(APP_PORT)/api/v1/actuator/health" | python3 -c \
-                    "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "PENDING")
-                  echo "Attempt $i/18 - status: $STATUS"
-                  if [ "$STATUS" = "UP" ]; then
-                    echo "App is UP! URL: http://${FQDN}:$(APP_PORT)/api/v1/swagger-ui.html"
-                    exit 0
-                  fi
-                  sleep 10
-                done
-
-                echo "Health check timed out"
-                exit 1
+                - task: AzureCLI@2
+                  displayName: 'Health check'
+                  inputs:
+                    azureSubscription: '$(AZURE_SERVICE_CONN)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      set -e
+                      
+                      FQDN=$(az container show \
+                        --name           $(CONTAINER_GROUP_NAME) \
+                        --resource-group $(RESOURCE_GROUP) \
+                        --query          "ipAddress.fqdn" \
+                        --output tsv)
+                      
+                      for i in $(seq 1 18); do
+                        STATUS=$(curl -sf "http://${FQDN}:$(APP_PORT)/api/v1/actuator/health" | python3 -c \
+                          "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "PENDING")
+                        echo "Attempt $i/18 - status: $STATUS"
+                        if [ "$STATUS" = "UP" ]; then
+                          echo "App is UP! URL: http://${FQDN}:$(APP_PORT)/api/v1/swagger-ui.html"
+                          exit 0
+                        fi
+                        sleep 10
+                      done
+                      
+                      echo "Health check timed out"
+                      exit 1
