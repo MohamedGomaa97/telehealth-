@@ -14,7 +14,7 @@ pr:
       - main
 
 variables:
-  - group: Pipeline-var        # ← بيجيب المتغيرات من الـ group (secrets الحقيقية تتحط هنا)
+  - group: Pipeline-var      
   - name: AZURE_SERVICE_CONN
     value: 'azure-sub'
   - name: ACR_NAME
