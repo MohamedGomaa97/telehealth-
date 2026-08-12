@@ -20,7 +20,7 @@ variables:
   - name: ACR_NAME
     value: 'eblaaicontainer'
   - name: ACR_LOGIN_SERVER
-    value: 'eblaaicontainer.azurecr.io'
+    value: 'eblaaicontainer-ffddaucsc4haf3dq.azurecr.io'
   - name: RESOURCE_GROUP
     value: 'RERA-RG'
   - name: IMAGE_NAME
