@@ -14,7 +14,7 @@ pr:
       - main
 
 variables:
-  - group: Pipeline-var        
+  - group: Pipeline-var        # ← بيجيب المتغيرات من الـ group (secrets الحقيقية تتحط هنا)
   - name: AZURE_SERVICE_CONN
     value: 'azure-sub'
   - name: ACR_NAME
@@ -186,7 +186,7 @@ stages:
   jobs:
   - deployment: DeployToACI
     displayName: 'Deploy to Azure Container Instances'
-    environment: 'demo'   
+    environment: 'demo'   # ← لو عايز موافقة يدوية قبل الديبلوي، ضيف approval هنا من Pipelines → Environments
     strategy:
       runOnce:
         deploy:
@@ -194,6 +194,9 @@ stages:
 
           - task: AzureCLI@2
             displayName: 'Deploy container group (app + postgres + rabbitmq)'
+            env:
+              JWT_SECRET_VALUE: $(JWT_SECRET)
+              ADMIN_PASSWORD_VALUE: $(TELEHEALTH_ADMIN_PASSWORD)
             inputs:
               azureSubscription: '$(AZURE_SERVICE_CONN)'
               scriptType: 'bash'
@@ -289,11 +292,11 @@ stages:
                           - name: RABBITMQ_PASSWORD
                             secureValue: '$(RABBITMQ_PASSWORD)'
                           - name: JWT_SECRET
-                            secureValue: '$(JWT_SECRET)'
+                            secureValue: '${JWT_SECRET_VALUE}'
                           - name: TELEHEALTH_ADMIN_EMAIL
                             value: admin@telehealth.local
                           - name: TELEHEALTH_ADMIN_PASSWORD
-                            secureValue: '$(TELEHEALTH_ADMIN_PASSWORD)'
+                            secureValue: '${ADMIN_PASSWORD_VALUE}'
                           - name: APP_VERSION
                             value: '$(Build.BuildId)'
                         ports:
