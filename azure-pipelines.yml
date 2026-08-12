@@ -29,7 +29,7 @@ variables:
     value: '$(Build.BuildId)'
   - name: FULL_IMAGE
     value: 'eblaaicontainer.azurecr.io/telehealth:$(Build.BuildId)'
-    name: DEPLOY_IMAGE
+  - name: DEPLOY_IMAGE
     value: 'eblaaicontainer-ffddaucsc4haf3dq.azurecr.io/telehealth:$(Build.BuildId)'
   - name: CONTAINER_GROUP_NAME
     value: 'telehealth-demo'
