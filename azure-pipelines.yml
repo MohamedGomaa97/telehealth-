@@ -186,7 +186,7 @@ stages:
   jobs:
   - deployment: DeployToACI
     displayName: 'Deploy to Azure Container Instances'
-    environment: 'production'   # ← لو عايز موافقة يدوية قبل الديبلوي، ضيف approval هنا من Pipelines → Environments
+    environment: 'demo'   # ← لو عايز موافقة يدوية قبل الديبلوي، ضيف approval هنا من Pipelines → Environments
     strategy:
       runOnce:
         deploy:
