@@ -240,8 +240,8 @@ stages:
                         image: postgres:16-alpine
                         resources:
                           requests:
-                            cpu: 0.5
-                            memoryInGb: 1.0
+                            cpu: 0.25
+                            memoryInGb: 0.5
                         environmentVariables:
                           - name: POSTGRES_DB
                             value: telehealth_db
@@ -256,8 +256,8 @@ stages:
                         image: rabbitmq:3.13-management-alpine
                         resources:
                           requests:
-                            cpu: 0.5
-                            memoryInGb: 1.0
+                            cpu: 0.25
+                            memoryInGb: 0.5
                         environmentVariables:
                           - name: RABBITMQ_DEFAULT_USER
                             value: guest
@@ -273,8 +273,8 @@ stages:
                         image: $(FULL_IMAGE)
                         resources:
                           requests:
-                            cpu: 1.0
-                            memoryInGb: 1.5
+                            cpu: 0.5
+                            memoryInGb: 1.0
                         environmentVariables:
                           - name: DB_HOST
                             value: localhost
